@@ -1,0 +1,37 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  ubuntu:
+    name: Ubuntu (CMake)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Smoke test – xfidx
+        run: |
+          build/xfidx -o /tmp/test.idx /usr/bin
+          head -5 /tmp/test.idx
+
+      - name: Smoke test – xfind (non-interactive)
+        run: |
+          build/xfind -i /tmp/test.idx --open ls || true
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: xfind-ubuntu
+          path: |
+            build/xfidx
+            build/xfind
