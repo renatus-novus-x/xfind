@@ -1,5 +1,12 @@
 /*
  * ACTIONS.C  --  open / cd implementation
+ *
+ * Filesystem operations (stat, is_dir) use POSIX on both platforms.
+ * The m68k-xelf toolchain for X68K provides POSIX stat/unistd support.
+ *
+ * Only action_open() differs:
+ *   Ubuntu : xdg-open for files; execv for executables
+ *   X68K   : _dos_exec2 for executables; _dos_exec2 for everything
  */
 
 #include "ACTIONS.H"
@@ -7,10 +14,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* ------------------------------------------------------------------ */
-/* Helpers                                                              */
+/* Common helpers  (POSIX stat on both platforms)                      */
 /* ------------------------------------------------------------------ */
+
+static int is_dir(const char *path)
+{
+    struct stat st;
+    return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
+}
 
 static void parent_dir(const char *path, char *out, size_t outsz)
 {
@@ -18,7 +33,6 @@ static void parent_dir(const char *path, char *out, size_t outsz)
     size_t dirlen;
 
     if (base == path) {
-        /* no separator found: current directory */
         strncpy(out, ".", outsz - 1);
         out[outsz - 1] = '\0';
         return;
@@ -26,7 +40,6 @@ static void parent_dir(const char *path, char *out, size_t outsz)
     dirlen = (size_t)(base - path);
     if (dirlen >= outsz) dirlen = outsz - 1;
     memcpy(out, path, dirlen);
-    /* strip trailing separator */
     while (dirlen > 1 &&
            (out[dirlen-1] == '/' || out[dirlen-1] == '\\'))
         dirlen--;
@@ -34,19 +47,22 @@ static void parent_dir(const char *path, char *out, size_t outsz)
 }
 
 /* ------------------------------------------------------------------ */
-/* POSIX implementation                                                 */
+/* action_open  (platform-specific)                                    */
 /* ------------------------------------------------------------------ */
 
-#ifdef PLATFORM_POSIX
+#ifdef PLATFORM_X68K
 
-#include <sys/stat.h>
-#include <unistd.h>
+#include <x68k/dos.h>
 
-static int is_dir(const char *path)
+int action_open(const char *path)
 {
-    struct stat st;
-    return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
+    if (is_dir(path)) return action_cd(path);
+
+    /* On Human68k, launch executable via DOS EXEC2 */
+    return _dos_exec2(0, path, "", "");
 }
+
+#else /* PLATFORM_POSIX */
 
 static int is_executable(const char *path)
 {
@@ -58,45 +74,22 @@ static int is_executable(const char *path)
 
 int action_open(const char *path)
 {
-    if (is_dir(path))        return action_cd(path);
+    if (is_dir(path)) return action_cd(path);
+
     if (is_executable(path)) {
-        /* Launch executable directly */
         char cmd[PATH_MAX_LEN + 4];
         snprintf(cmd, sizeof(cmd), "\"%s\"", path);
         return system(cmd);
     }
-    /* Use xdg-open for everything else */
+
     {
         char cmd[PATH_MAX_LEN + 16];
-        snprintf(cmd, sizeof(cmd), "xdg-open \"%s\"", path);
+        snprintf(cmd, sizeof(cmd), "xdg-open \"%s\" &", path);
         return system(cmd);
     }
 }
 
-#endif /* PLATFORM_POSIX */
-
-/* ------------------------------------------------------------------ */
-/* Human68k implementation                                              */
-/* ------------------------------------------------------------------ */
-
-#ifdef PLATFORM_X68K
-
-#include <sys/dos.h>
-
-static int is_dir(const char *path)
-{
-    struct _finddata_t fd;
-    return (_dos_findfirst(path, 0x17, &fd) == 0 && (fd.attrib & 0x10));
-}
-
-int action_open(const char *path)
-{
-    if (is_dir(path)) return action_cd(path);
-    /* On Human68k just execute via EXEC */
-    return _dos_exec(path, NULL, NULL);
-}
-
-#endif /* PLATFORM_X68K */
+#endif /* PLATFORM_X68K / PLATFORM_POSIX */
 
 /* ------------------------------------------------------------------ */
 /* action_cd  (platform-independent)                                   */
@@ -107,29 +100,12 @@ int action_cd(const char *path)
     char target[PATH_MAX_LEN];
     FILE *fp;
 
-    /* Determine target directory */
-#ifdef PLATFORM_POSIX
-    {
-        struct stat st;
-        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            strncpy(target, path, PATH_MAX_LEN - 1);
-            target[PATH_MAX_LEN - 1] = '\0';
-        } else {
-            parent_dir(path, target, sizeof(target));
-        }
+    if (is_dir(path)) {
+        strncpy(target, path, PATH_MAX_LEN - 1);
+        target[PATH_MAX_LEN - 1] = '\0';
+    } else {
+        parent_dir(path, target, sizeof(target));
     }
-#else
-    {
-        /* X68K: assume path type from listing */
-        struct _finddata_t fd;
-        if (_dos_findfirst(path, 0x17, &fd) == 0 && (fd.attrib & 0x10)) {
-            strncpy(target, path, PATH_MAX_LEN - 1);
-            target[PATH_MAX_LEN - 1] = '\0';
-        } else {
-            parent_dir(path, target, sizeof(target));
-        }
-    }
-#endif
 
     fp = fopen(XFIND_CD_FILE, "w");
     if (!fp) {

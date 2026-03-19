@@ -2,11 +2,11 @@
  * UITUI.C  --  Minimal TUI implementation
  *
  * Uses ANSI escape sequences for cursor movement and clearing.
- * Both Ubuntu (any VT100 terminal) and X68K (IOCS console) support these.
+ * Both Ubuntu (VT100 terminal) and X68K (IOCS console) support ANSI escapes.
  *
- * Raw mode:
- *   POSIX  : tcgetattr / tcsetattr
- *   X68K   : _dos_rawmode (or BIOS equivalent)
+ * Terminal raw mode:
+ *   POSIX (Ubuntu)  : POSIX termios tcgetattr/tcsetattr
+ *   X68K (Human68k) : _dos_getchar() reads one key without echo
  */
 
 #include "UITUI.H"
@@ -25,17 +25,14 @@
 #define ANSI_CLEAR_LINE    "\033[2K"
 #define ANSI_REVERSE       "\033[7m"
 #define ANSI_RESET         "\033[0m"
-#define ANSI_CURSOR_UP     "\033[A"
-#define ANSI_CURSOR_DOWN   "\033[B"
 
-/* Move cursor to row r (1-based), column 1 */
 static void move_to(int row)
 {
     printf("\033[%d;1H", row);
 }
 
 /* ------------------------------------------------------------------ */
-/* Terminal raw mode                                                    */
+/* Platform-specific raw-mode key reading                              */
 /* ------------------------------------------------------------------ */
 
 #ifdef PLATFORM_POSIX
@@ -67,13 +64,12 @@ static int read_key(void)
     if (read(STDIN_FILENO, &c, 1) != 1) return -1;
 
     if (c == 0x1b) {
-        /* Escape sequence */
         unsigned char seq[2];
         if (read(STDIN_FILENO, &seq[0], 1) != 1) return 0x1b;
         if (read(STDIN_FILENO, &seq[1], 1) != 1) return 0x1b;
         if (seq[0] == '[') {
-            if (seq[1] == 'A') return 'k'; /* up    -> k */
-            if (seq[1] == 'B') return 'j'; /* down  -> j */
+            if (seq[1] == 'A') return 'k'; /* Up   -> k */
+            if (seq[1] == 'B') return 'j'; /* Down -> j */
         }
         return 0x1b;
     }
@@ -84,15 +80,27 @@ static int read_key(void)
 
 #ifdef PLATFORM_X68K
 
-static void raw_enter(void) { /* raw mode is default on X68K console */ }
+#include <x68k/dos.h>
+
+/* X68K Human68k console: _dos_getchar reads one key without echo.
+ * Arrow keys return extended codes: up=0x3A, down=0x3B (typical). */
+#define X68K_KEY_UP   0x3A
+#define X68K_KEY_DOWN 0x3B
+
+static void raw_enter(void) { /* Human68k console is key-by-key by default */ }
 static void raw_leave(void) {}
 
 static int read_key(void)
 {
-    /* _dos_getchar_noecho: returns key without echo */
-    int c = _dos_getchar_noecho();
-    /* Map X68K special keys if needed (simplified) */
-    return c;
+    int c = _dos_getchar();
+    /* Extended key codes on X68K: high byte is non-zero */
+    if (c > 0xff) {
+        int lo = c & 0xff;
+        if (lo == X68K_KEY_UP)   return 'k';
+        if (lo == X68K_KEY_DOWN) return 'j';
+        return 0;
+    }
+    return c & 0xff;
 }
 
 #endif /* PLATFORM_X68K */
@@ -101,9 +109,9 @@ static int read_key(void)
 /* Display helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-#define HEADER_ROWS   2   /* title + separator */
-#define MAX_VISIBLE  20   /* max entries shown at once */
-#define MAX_PATH_DISP 72  /* truncated display width */
+#define HEADER_ROWS   2
+#define MAX_VISIBLE  20
+#define MAX_PATH_DISP 72
 
 static void truncate_path(const char *path, char *out, int maxlen)
 {
@@ -112,7 +120,6 @@ static void truncate_path(const char *path, char *out, int maxlen)
         strncpy(out, path, (size_t)maxlen);
         out[maxlen] = '\0';
     } else {
-        /* Show "...tail" */
         const char *tail = path + (len - (maxlen - 3));
         out[0] = '.'; out[1] = '.'; out[2] = '.';
         strncpy(out + 3, tail, (size_t)(maxlen - 3));
@@ -128,17 +135,13 @@ static void draw_screen(const MatchSet *set, int cursor, int offset)
 
     if (visible > MAX_VISIBLE) visible = MAX_VISIBLE;
 
-    /* Clear screen and go home */
     printf(ANSI_CLEAR_SCREEN ANSI_HOME);
-
-    /* Header */
     printf("xfind  [%d results]  Enter=open  c=cd  q=quit\n", set->count);
     printf("------------------------------------------------\n");
 
     for (i = 0; i < visible; i++) {
         int idx = offset + i;
         const IndexEntry *e = set->results[idx].entry;
-        char type = e->type;
 
         move_to(HEADER_ROWS + 1 + i);
         printf(ANSI_CLEAR_LINE);
@@ -146,19 +149,14 @@ static void draw_screen(const MatchSet *set, int cursor, int offset)
         truncate_path(e->path, disp, MAX_PATH_DISP);
 
         if (idx == cursor) {
-            printf(ANSI_REVERSE " %c  %s" ANSI_RESET, type, disp);
+            printf(ANSI_REVERSE " %c  %s" ANSI_RESET, e->type, disp);
         } else {
-            printf("    %c  %s", type, disp);  /* 4 spaces indent */
+            printf("    %c  %s", e->type, disp);
         }
     }
 
-    /* Status bar */
     move_to(HEADER_ROWS + MAX_VISIBLE + 2);
-    printf(ANSI_CLEAR_LINE);
-    if (set->count > 0) {
-        printf("[%d/%d]", cursor + 1, set->count);
-    }
-
+    printf(ANSI_CLEAR_LINE "[%d/%d]", cursor + 1, set->count);
     fflush(stdout);
 }
 
@@ -186,31 +184,29 @@ int tui_run(const MatchSet *set)
 
         switch (k) {
         case 'q':
-        case 0x1b: /* ESC */
+        case 0x1b:
             done = 1;
             break;
 
         case '\r':
         case '\n':
-            action = 1; /* open */
+            action = 1;
             done   = 1;
             break;
 
         case 'c':
-            action = 2; /* cd */
+            action = 2;
             done   = 1;
             break;
 
-        case 'k': /* up */
-        case 'K':
+        case 'k': case 'K':
             if (cursor > 0) {
                 cursor--;
                 if (cursor < offset) offset = cursor;
             }
             break;
 
-        case 'j': /* down */
-        case 'J':
+        case 'j': case 'J':
             if (cursor < set->count - 1) {
                 cursor++;
                 if (cursor >= offset + MAX_VISIBLE)
@@ -229,7 +225,6 @@ int tui_run(const MatchSet *set)
 
     raw_leave();
 
-    /* Clear TUI */
     printf(ANSI_CLEAR_SCREEN ANSI_HOME);
     fflush(stdout);
 

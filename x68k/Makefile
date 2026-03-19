@@ -1,30 +1,34 @@
 # x68k/Makefile  --  X68000 / Human68k cross-build
 #
-# Requires m68k-elf-gcc (or XC cross-compiler) in PATH.
-# Adjust CC, CFLAGS, and LDFLAGS for your toolchain.
+# Toolchain: m68k-xelf-gcc (elf2x68k integrated toolchain)
+# Install:   https://github.com/yunkya2/elf2x68k
 #
 # Usage:
-#   make          -- build xfidx.x and xfind.x
-#   make clean    -- remove build artefacts
+#   make                          # m68k-xelf-gcc is in PATH
+#   make TOOLCHAIN=/path/to/m68k-xelf  # specify toolchain root explicitly
+#   make clean
 
-CC      = m68k-elf-gcc
-CFLAGS  = -Wall -O2 -fomit-frame-pointer \
-          -D__human68k__ \
-          -I../src
+# If TOOLCHAIN is set, prepend its bin/ to PATH so that the linker wrapper
+# (ld.x) can find m68k-xelf-ld.bfd and elf2x68k.py by name.
+# If m68k-xelf-gcc is already in PATH, leave TOOLCHAIN unset.
+ifdef TOOLCHAIN
+export PATH := $(TOOLCHAIN)/bin:$(PATH)
+CROSS = $(TOOLCHAIN)/bin/m68k-xelf-
+else
+CROSS = m68k-xelf-
+endif
 
-# Human68k runtime library path (adjust as needed)
-# LDFLAGS = -L/path/to/hrt -lhrt
+CC = $(CROSS)gcc
+
+# -m68000        : target MC68000 (base X68000 CPU)
+# __m68k__ is predefined by the compiler; PLATFORM_X68K is set via PLATFORM.H
+CFLAGS = -m68000 -Wall -O2 -fomit-frame-pointer \
+         -I../src
+
+# Basic C runtime is sufficient; no extra libs needed
 LDFLAGS =
 
-SRC     = ../src
-
-COMMON_OBJS = \
-    $(SRC)/FSWALK.C \
-    $(SRC)/INDEX.C  \
-    $(SRC)/MATCH.C  \
-    $(SRC)/ACTIONS.C \
-    $(SRC)/CONFIG.C  \
-    $(SRC)/UITUI.C
+SRC = ../src
 
 .PHONY: all clean
 
@@ -34,8 +38,8 @@ xfidx.x: $(SRC)/MXFIDX.C $(SRC)/FSWALK.C $(SRC)/INDEX.C $(SRC)/CONFIG.C
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 xfind.x: $(SRC)/MXFIND.C $(SRC)/INDEX.C $(SRC)/MATCH.C \
-          $(SRC)/ACTIONS.C $(SRC)/CONFIG.C $(SRC)/UITUI.C
+         $(SRC)/ACTIONS.C $(SRC)/CONFIG.C $(SRC)/UITUI.C
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
-	rm -f xfidx.x xfind.x *.o
+	rm -f xfidx.x xfind.x *.o *.elf

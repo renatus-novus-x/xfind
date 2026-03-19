@@ -25,21 +25,13 @@
 /* Locate the index file                                                */
 /* ------------------------------------------------------------------ */
 
-#ifdef PLATFORM_POSIX
+/* POSIX stat is available on both Ubuntu and X68K (m68k-xelf toolchain) */
 #include <sys/stat.h>
 static int file_exists(const char *path)
 {
     struct stat st;
     return stat(path, &st) == 0;
 }
-#else
-#include <sys/dos.h>
-static int file_exists(const char *path)
-{
-    struct _finddata_t fd;
-    return _dos_findfirst(path, 0x17, &fd) == 0;
-}
-#endif
 
 static const char *find_index(const char *override)
 {
