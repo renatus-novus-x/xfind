@@ -25,6 +25,7 @@
 | Phase 4 | アクション（open / cd の Ubuntu・X68K 分岐） | 完了 |
 | Phase 5 | ビルド整備（CMakeLists.txt・x68k/Makefile・GitHub Actions・README.md） | 完了 |
 | Phase 6 | オープナのカスタマイズ（`-O`・`open_cmd`・`XFIND_OPEN`・自動検出・フォールバック） | 完了 |
+| Phase 7 | デフォルトオープナの設定（Ubuntu: `less`、X68K: `TYPE`） | 完了 |
 
 ---
 
@@ -153,24 +154,41 @@ C 標準の `qsort` は安定ソートを保証しない。
 `MatchResult` に `orig`（元インデックス）フィールドを持たせ、
 比較関数の最終 tiebreaker として使用することで安定ソートを実現した。
 
-### 6. オープナのカスタマイズ設計
+### 6. オープナのカスタマイズ設計・デフォルト
 
 `xdg-open` は Ubuntu の標準インストールに含まれないケースがある。
 `action_open()` に `opener` 引数を追加し、次の優先チェーンで解決する実装とした。
+
+#### Ubuntu (POSIX) のチェーン
 
 | 優先順位 | 手段 | 実装箇所 |
 |---------|------|---------|
 | 1 | `-O` / `--opener` コマンドラインオプション | `MXFIND.C` でパースし `opener` 変数に格納 |
 | 2 | 設定ファイルの `open_cmd` キー | `cfg_get()` で取得、`-O` がなければ採用 |
 | 3 | 環境変数 `XFIND_OPEN` | `ACTIONS.C` の `resolve_opener()` 内で参照 |
-| 4 | 自動検出（`xdg-open` → `open` → `mimeopen`） | `cmd_in_path()` で PATH 探索 |
+| 4 | 自動検出（`xdg-open` → `open` → `mimeopen` → `less`） | `cmd_in_path()` で PATH 探索 |
 | 5 | フォールバック | パスを stdout に出力して exit 0 |
+
+`less` を auto-detect 候補の末尾に追加した。Ubuntu に事実上常に存在するため、
+`xdg-open` 等が見つからない環境でも実質的に `less` がデフォルトとして機能する。
+
+#### X68K のチェーン
+
+| 優先順位 | 手段 | 実装箇所 |
+|---------|------|---------|
+| 1 | `-O` / `--opener` コマンドラインオプション | `MXFIND.C` でパースし `opener` として渡す |
+| 2 | 設定ファイルの `open_cmd` キー | `cfg_get()` で取得 |
+| 3 | 環境変数 `XFIND_OPEN` | `ACTIONS.C` X68K ブランチ内で `getenv()` |
+| 4 | `TYPE`（Human68k シェル組み込み） | 常に使用可能。フォールバック不要 |
+
+実行可能ファイル（`.X` / `.COM` / `.BAT`）は常に `_dos_exec2()` で直接起動する。
+非実行ファイルにはオープナチェーンを適用し、デフォルトは `TYPE`。
 
 設計のポイント:
 - 1・2 の解決は `MXFIND.C` が担い、`opener` として `action_open()` に渡す
-- 3・4・5 の解決は `ACTIONS.C` 内の `resolve_opener()` が担う
+- POSIX の 3・4・5 の解決は `ACTIONS.C` 内の `resolve_opener()` が担う
+- X68K の 3・4 の解決は `ACTIONS.C` X68K ブランチが直接処理する
 - `tui_run()` も `opener` を受け取り、Enter キー時に透過して渡す
-- X68K では `opener` 引数は無視され、常に `_dos_exec2()` を使用
 
 ### 5. OS 依存差分の分離
 

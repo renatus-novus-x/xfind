@@ -119,11 +119,19 @@ xcd() {
 | 1 | `-O` / `--opener` オプション | `xfind -O zathura readme.pdf` |
 | 2 | 設定ファイルの `open_cmd` | `open_cmd = evince` |
 | 3 | 環境変数 `XFIND_OPEN` | `export XFIND_OPEN=less` |
-| 4 | 自動検出 | `xdg-open` → `open` → `mimeopen` の順 |
-| 5 | フォールバック | パスを標準出力に表示して終了 (exit 0) |
+| 4 | 自動検出（プラットフォーム依存） | 下表参照 |
+| 5 | フォールバック（Ubuntu のみ） | パスを標準出力に表示して終了 (exit 0) |
+
+プラットフォームごとの自動検出（優先順位 4）:
+
+| プラットフォーム | 検出順 |
+|----------------|--------|
+| Ubuntu | `xdg-open` → `open` → `mimeopen` → `less` |
+| X68000 | `TYPE`（Human68k シェル組み込み、常に使用可能） |
 
 `xdg-open` は Ubuntu の標準インストールに含まれない場合があります。
-その場合は設定ファイルまたは `XFIND_OPEN` でオープナを指定してください。
+その場合は `less` が実質的なデフォルトとして使用されます。
+`-O` / `open_cmd` / `XFIND_OPEN` による上書きは X68000 でも有効です。
 
 設定ファイル (`xfind.cfg`) の例:
 

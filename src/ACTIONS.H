@@ -9,11 +9,16 @@
  *   xcd() { xfind "$@"; p=$(cat /tmp/xfind_cd 2>/dev/null); \
  *            [ -n "$p" ] && cd "$p" && rm -f /tmp/xfind_cd; }
  *
- * Opener resolution order (POSIX, non-executable files):
- *   1. opener argument passed to action_open() -- from -O / open_cmd config
- *   2. XFIND_OPEN environment variable
- *   3. auto-detect: xdg-open, open, mimeopen  (first found in PATH)
- *   4. fallback: print path to stdout, exit 0
+ * Opener resolution order (non-executable files):
+ *   POSIX:
+ *     1. opener argument passed to action_open() -- from -O / open_cmd config
+ *     2. XFIND_OPEN environment variable
+ *     3. auto-detect: xdg-open, open, mimeopen, less  (first found in PATH)
+ *     4. fallback: print path to stdout, exit 0
+ *   X68K:
+ *     1. opener argument passed to action_open() -- from -O / open_cmd config
+ *     2. XFIND_OPEN environment variable
+ *     3. TYPE  (Human68k shell built-in, always available)
  */
 
 #ifndef ACTIONS_H
@@ -26,8 +31,9 @@
  * Open a file or directory.
  *
  *   path   : target file or directory
- *   opener : opener command override (NULL = use env / auto-detect / fallback)
- *            Ignored on X68K (always uses _dos_exec2).
+ *   opener : opener command override (NULL = use env / auto-detect / default)
+ *            POSIX: NULL triggers env/auto-detect/fallback chain.
+ *            X68K:  NULL triggers env/TYPE chain.
  *
  * Behaviour:
  *   - directory       : calls action_cd()

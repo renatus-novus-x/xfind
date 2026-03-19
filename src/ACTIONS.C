@@ -6,7 +6,9 @@
  *
  * action_open() behaviour by platform:
  *   POSIX : executable -> direct exec; other -> opener chain; dir -> cd
- *   X68K  : _dos_exec2 for everything; opener argument is ignored
+ *           Opener chain: -O/open_cmd > XFIND_OPEN env > xdg-open/open/mimeopen/less > print path
+ *   X68K  : executable (.X/.COM/.BAT) -> _dos_exec2; other -> opener chain; dir -> cd
+ *           Opener chain: -O/open_cmd > XFIND_OPEN env > TYPE (default built-in)
  */
 
 #include "ACTIONS.H"
@@ -102,12 +104,12 @@ static int cmd_in_path(const char *cmd)
  * Priority:
  *   1. override   (from -O / open_cmd config -- already merged by caller)
  *   2. XFIND_OPEN env var
- *   3. auto-detect: xdg-open, open, mimeopen
+ *   3. auto-detect: xdg-open, open, mimeopen, less
  *   4. NULL  => fallback: print path
  */
 static const char *resolve_opener(const char *override)
 {
-    static const char *candidates[] = {"xdg-open", "open", "mimeopen", NULL};
+    static const char *candidates[] = {"xdg-open", "open", "mimeopen", "less", NULL};
     const char *env;
     int i;
 
@@ -148,18 +150,48 @@ int action_open(const char *path, const char *opener)
 #endif /* PLATFORM_POSIX */
 
 /* ------------------------------------------------------------------ */
-/* X68K: use _dos_exec2; opener argument is not used                  */
+/* X68K: executable files via _dos_exec2; others via opener chain     */
+/* Opener chain: opener arg > XFIND_OPEN env > TYPE (default)         */
 /* ------------------------------------------------------------------ */
 
 #ifdef PLATFORM_X68K
 
 #include <x68k/dos.h>
 
+/*
+ * On Human68k, executable files have .X, .COM, or .BAT extensions.
+ */
+static int is_x68k_executable(const char *path)
+{
+    const char *ext = strrchr(path, '.');
+    if (!ext) return 0;
+    return (plat_strcasecmp(ext, ".x")   == 0 ||
+            plat_strcasecmp(ext, ".com") == 0 ||
+            plat_strcasecmp(ext, ".bat") == 0);
+}
+
 int action_open(const char *path, const char *opener)
 {
-    (void)opener; /* not used on X68K */
+    const char *o;
+    char cmd[PATH_MAX_LEN + 16];
+
     if (is_dir(path)) return action_cd(path);
-    return _dos_exec2(0, path, "", "");
+
+    /* Executable files: run directly */
+    if (is_x68k_executable(path)) {
+        return _dos_exec2(0, path, "", "");
+    }
+
+    /* Non-executable files: opener chain */
+    if (opener && *opener) {
+        o = opener;
+    } else {
+        o = getenv("XFIND_OPEN");
+        if (!o || !*o) o = "TYPE"; /* Human68k shell built-in */
+    }
+
+    snprintf(cmd, sizeof(cmd), "%s %s", o, path);
+    return system(cmd);
 }
 
 #endif /* PLATFORM_X68K */
