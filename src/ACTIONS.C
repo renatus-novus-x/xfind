@@ -4,9 +4,9 @@
  * Filesystem operations (stat, is_dir) use POSIX on both platforms.
  * The m68k-xelf toolchain for X68K provides POSIX stat/unistd support.
  *
- * Only action_open() differs:
- *   Ubuntu : xdg-open for files; execv for executables
- *   X68K   : _dos_exec2 for executables; _dos_exec2 for everything
+ * action_open() behaviour by platform:
+ *   POSIX : executable -> direct exec; other -> opener chain; dir -> cd
+ *   X68K  : _dos_exec2 for everything; opener argument is ignored
  */
 
 #include "ACTIONS.H"
@@ -47,22 +47,10 @@ static void parent_dir(const char *path, char *out, size_t outsz)
 }
 
 /* ------------------------------------------------------------------ */
-/* action_open  (platform-specific)                                    */
+/* POSIX: opener resolution chain                                       */
 /* ------------------------------------------------------------------ */
 
-#ifdef PLATFORM_X68K
-
-#include <x68k/dos.h>
-
-int action_open(const char *path)
-{
-    if (is_dir(path)) return action_cd(path);
-
-    /* On Human68k, launch executable via DOS EXEC2 */
-    return _dos_exec2(0, path, "", "");
-}
-
-#else /* PLATFORM_POSIX */
+#ifdef PLATFORM_POSIX
 
 static int is_executable(const char *path)
 {
@@ -72,24 +60,109 @@ static int is_executable(const char *path)
             (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)));
 }
 
-int action_open(const char *path)
+/*
+ * Return cmd if it is found as an executable in PATH, NULL otherwise.
+ * Handles absolute paths directly; bare names are searched in PATH.
+ */
+static int cmd_in_path(const char *cmd)
 {
+    const char *path_env;
+    const char *p, *q;
+    char buf[PATH_MAX_LEN];
+
+    if (!cmd || !*cmd) return 0;
+
+    /* Absolute or relative path: check directly */
+    if (strchr(cmd, '/') || strchr(cmd, '\\'))
+        return access(cmd, X_OK) == 0;
+
+    path_env = getenv("PATH");
+    if (!path_env) return 0;
+
+    p = path_env;
+    while (*p) {
+        q = strchr(p, ':');
+        {
+            size_t dlen = q ? (size_t)(q - p) : strlen(p);
+            if (dlen + 1 + strlen(cmd) + 1 < sizeof(buf)) {
+                memcpy(buf, p, dlen);
+                buf[dlen] = '/';
+                strcpy(buf + dlen + 1, cmd);
+                if (access(buf, X_OK) == 0) return 1;
+            }
+        }
+        if (!q) break;
+        p = q + 1;
+    }
+    return 0;
+}
+
+/*
+ * Resolve the opener to use for non-executable files.
+ * Priority:
+ *   1. override   (from -O / open_cmd config -- already merged by caller)
+ *   2. XFIND_OPEN env var
+ *   3. auto-detect: xdg-open, open, mimeopen
+ *   4. NULL  => fallback: print path
+ */
+static const char *resolve_opener(const char *override)
+{
+    static const char *candidates[] = {"xdg-open", "open", "mimeopen", NULL};
+    const char *env;
+    int i;
+
+    if (override && *override) return override;
+
+    env = getenv("XFIND_OPEN");
+    if (env && *env) return env;
+
+    for (i = 0; candidates[i]; i++) {
+        if (cmd_in_path(candidates[i])) return candidates[i];
+    }
+    return NULL; /* fallback */
+}
+
+int action_open(const char *path, const char *opener)
+{
+    const char *o;
+    char cmd[PATH_MAX_LEN + 64];
+
     if (is_dir(path)) return action_cd(path);
 
     if (is_executable(path)) {
-        char cmd[PATH_MAX_LEN + 4];
         snprintf(cmd, sizeof(cmd), "\"%s\"", path);
         return system(cmd);
     }
 
-    {
-        char cmd[PATH_MAX_LEN + 16];
-        snprintf(cmd, sizeof(cmd), "xdg-open \"%s\" &", path);
+    o = resolve_opener(opener);
+    if (o) {
+        snprintf(cmd, sizeof(cmd), "%s \"%s\"", o, path);
         return system(cmd);
     }
+
+    /* Fallback: print path so the user can act on it */
+    printf("%s\n", path);
+    return 0;
 }
 
-#endif /* PLATFORM_X68K / PLATFORM_POSIX */
+#endif /* PLATFORM_POSIX */
+
+/* ------------------------------------------------------------------ */
+/* X68K: use _dos_exec2; opener argument is not used                  */
+/* ------------------------------------------------------------------ */
+
+#ifdef PLATFORM_X68K
+
+#include <x68k/dos.h>
+
+int action_open(const char *path, const char *opener)
+{
+    (void)opener; /* not used on X68K */
+    if (is_dir(path)) return action_cd(path);
+    return _dos_exec2(0, path, "", "");
+}
+
+#endif /* PLATFORM_X68K */
 
 /* ------------------------------------------------------------------ */
 /* action_cd  (platform-independent)                                   */

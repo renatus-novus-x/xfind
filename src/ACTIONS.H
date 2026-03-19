@@ -6,8 +6,14 @@
  * wrapper function can read and execute "cd" with.
  *
  * Recommended shell setup (bash/zsh):
- *   xcd() { xfind "$@"; p=$(cat "$TMPDIR/xfind_cd" 2>/dev/null); \
- *            [ -n "$p" ] && cd "$p" && rm -f "$TMPDIR/xfind_cd"; }
+ *   xcd() { xfind "$@"; p=$(cat /tmp/xfind_cd 2>/dev/null); \
+ *            [ -n "$p" ] && cd "$p" && rm -f /tmp/xfind_cd; }
+ *
+ * Opener resolution order (POSIX, non-executable files):
+ *   1. opener argument passed to action_open() -- from -O / open_cmd config
+ *   2. XFIND_OPEN environment variable
+ *   3. auto-detect: xdg-open, open, mimeopen  (first found in PATH)
+ *   4. fallback: print path to stdout, exit 0
  */
 
 #ifndef ACTIONS_H
@@ -17,13 +23,20 @@
 #define XFIND_CD_FILE  "/tmp/xfind_cd"
 
 /*
- * Open a file or directory with the platform's default mechanism.
- *   - executable file : execv / EXEC2
- *   - other file      : xdg-open (Ubuntu) / built-in opener (X68K)
- *   - directory       : treated as cd (calls action_cd internally)
- * Returns 0 on success, -1 on error.
+ * Open a file or directory.
+ *
+ *   path   : target file or directory
+ *   opener : opener command override (NULL = use env / auto-detect / fallback)
+ *            Ignored on X68K (always uses _dos_exec2).
+ *
+ * Behaviour:
+ *   - directory       : calls action_cd()
+ *   - executable file : runs directly (POSIX) / _dos_exec2 (X68K)
+ *   - other file      : resolves opener per the chain above
+ *
+ * Returns 0 on success (including fallback path-print), -1 on hard error.
  */
-int action_open(const char *path);
+int action_open(const char *path, const char *opener);
 
 /*
  * Write the cd target to XFIND_CD_FILE and print a hint.

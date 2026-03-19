@@ -5,10 +5,15 @@
  *   xfind [options] [QUERY]
  *
  * Options:
- *   -i FILE   index file (default: xfind.idx in cwd, then $HOME/.xfind.idx)
- *   -c FILE   config file
- *   --open    non-interactive: open best match
- *   --cd      non-interactive: cd to best match
+ *   -i FILE        index file (default: xfind.idx in cwd, then $HOME/.xfind.idx)
+ *   -c FILE        config file
+ *   -O CMD         opener command (overrides open_cmd in config and XFIND_OPEN env)
+ *   --opener CMD   same as -O
+ *   --open         non-interactive: open best match
+ *   --cd           non-interactive: cd to best match
+ *
+ * Opener resolution order (non-executable files, POSIX):
+ *   -O / --opener  >  config open_cmd  >  XFIND_OPEN env  >  auto-detect  >  print path
  */
 
 #include "PLATFORM.H"
@@ -62,16 +67,27 @@ static const char *find_index(const char *override)
 static void usage(void)
 {
     fprintf(stderr,
-        "Usage: xfind [-i INDEXFILE] [-c CONFIG] [--open|--cd] [QUERY]\n");
+        "Usage: xfind [-i INDEXFILE] [-c CONFIG] [-O OPENER] [--open|--cd] [QUERY]\n"
+        "  -i FILE        index file\n"
+        "  -c FILE        config file (supports: open_cmd)\n"
+        "  -O, --opener CMD  opener command for non-executable files\n"
+        "  --open         non-interactive: open best match\n"
+        "  --cd           non-interactive: cd to best match\n"
+        "  QUERY          search term (omit to show all)\n"
+        "\n"
+        "Opener resolution order:\n"
+        "  -O CMD  >  config open_cmd  >  XFIND_OPEN env  >  auto-detect  >  print path\n");
 }
 
 int main(int argc, char *argv[])
 {
-    const char *idxfile  = NULL;
-    const char *cfgfile  = NULL;
-    int         mode_open = 0; /* non-interactive open */
-    int         mode_cd   = 0; /* non-interactive cd   */
-    const char *query    = NULL;
+    const char *idxfile   = NULL;
+    const char *cfgfile   = NULL;
+    const char *opt_opener = NULL; /* from -O / --opener */
+    int         mode_open = 0;
+    int         mode_cd   = 0;
+    const char *query     = NULL;
+    const char *opener    = NULL; /* resolved opener passed to actions */
     int         i;
     Config      cfg;
     IndexTable  table;
@@ -86,6 +102,9 @@ int main(int argc, char *argv[])
             idxfile = argv[++i];
         } else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
             cfgfile = argv[++i];
+        } else if ((strcmp(argv[i], "-O") == 0 ||
+                    strcmp(argv[i], "--opener") == 0) && i + 1 < argc) {
+            opt_opener = argv[++i];
         } else if (strcmp(argv[i], "--open") == 0) {
             mode_open = 1;
         } else if (strcmp(argv[i], "--cd") == 0) {
@@ -103,6 +122,17 @@ int main(int argc, char *argv[])
 
     /* Load config */
     if (cfgfile) cfg_load(&cfg, cfgfile);
+
+    /*
+     * Resolve opener:
+     *   -O / --opener  >  open_cmd in config  >  NULL (auto-detect in action_open)
+     * XFIND_OPEN env and auto-detect are handled inside action_open().
+     */
+    if (opt_opener && *opt_opener) {
+        opener = opt_opener;
+    } else {
+        opener = cfg_get(&cfg, "open_cmd", NULL);
+    }
 
     /* Determine index path */
     idxfile = find_index(idxfile);
@@ -131,7 +161,7 @@ int main(int argc, char *argv[])
 
     /* Non-interactive modes */
     if (mode_open) {
-        ret = action_open(set.results[0].entry->path);
+        ret = action_open(set.results[0].entry->path, opener);
         goto cleanup;
     }
     if (mode_cd) {
@@ -140,7 +170,7 @@ int main(int argc, char *argv[])
     }
 
     /* Interactive TUI */
-    ret = tui_run(&set);
+    ret = tui_run(&set, opener);
 
 cleanup:
     match_free(&set);

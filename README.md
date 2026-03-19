@@ -67,13 +67,14 @@ XFIDX.X -o MYIDX.IDX C:\BIN C:\DOC
 ## `xfind` 使い方
 
 ```text
-xfind [-i INDEXFILE] [-c CONFIG] [--open|--cd] [QUERY]
+xfind [-i INDEXFILE] [-c CONFIG] [-O OPENER] [--open|--cd] [QUERY]
 
-  -i INDEXFILE   インデックスファイル (デフォルト: xfind.idx → ~/.xfind.idx の順に探索)
-  -c CONFIG      設定ファイル
-  --open         非対話: ベストマッチを開く
-  --cd           非対話: ベストマッチへ cd する (シェルラッパー必要、後述)
-  QUERY          検索語 (省略時は全件表示)
+  -i INDEXFILE        インデックスファイル (デフォルト: xfind.idx → ~/.xfind.idx)
+  -c FILE             設定ファイル
+  -O CMD, --opener CMD  オープナコマンド (後述の優先順位を上書き)
+  --open              非対話: ベストマッチを開く
+  --cd                非対話: ベストマッチへ cd する (シェルラッパー必要、後述)
+  QUERY               検索語 (省略時は全件表示)
 ```
 
 ### TUI キー操作
@@ -106,6 +107,42 @@ xcd() {
 ```
 
 以後 `xfind` の代わりに `xcd readme` と打つと、`c` アクションで実際にシェルが移動します。
+
+---
+
+## オープナの設定
+
+非実行ファイルを開く際に使うコマンド（オープナ）は次の順で決定します。
+
+| 優先順位 | 手段 | 例 |
+|---------|------|----|
+| 1 | `-O` / `--opener` オプション | `xfind -O zathura readme.pdf` |
+| 2 | 設定ファイルの `open_cmd` | `open_cmd = evince` |
+| 3 | 環境変数 `XFIND_OPEN` | `export XFIND_OPEN=less` |
+| 4 | 自動検出 | `xdg-open` → `open` → `mimeopen` の順 |
+| 5 | フォールバック | パスを標準出力に表示して終了 (exit 0) |
+
+`xdg-open` は Ubuntu の標準インストールに含まれない場合があります。
+その場合は設定ファイルまたは `XFIND_OPEN` でオープナを指定してください。
+
+設定ファイル (`xfind.cfg`) の例:
+
+```text
+open_cmd = xdg-open
+```
+
+環境変数での設定例:
+
+```sh
+export XFIND_OPEN=xdg-open
+```
+
+コマンドラインでの一時指定:
+
+```sh
+xfind -O "evince" report
+xfind --opener "less" readme
+```
 
 ---
 

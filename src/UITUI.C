@@ -164,7 +164,7 @@ static void draw_screen(const MatchSet *set, int cursor, int offset)
 /* Main TUI loop                                                        */
 /* ------------------------------------------------------------------ */
 
-int tui_run(const MatchSet *set)
+int tui_run(const MatchSet *set, const char *opener)
 {
     int cursor = 0;
     int offset = 0;
@@ -230,7 +230,7 @@ int tui_run(const MatchSet *set)
 
     if (action && cursor < set->count) {
         const char *path = set->results[cursor].entry->path;
-        if (action == 1) return action_open(path);
+        if (action == 1) return action_open(path, opener);
         if (action == 2) return action_cd(path);
     }
 
